@@ -1,0 +1,172 @@
+name: Build NEO Media 0.3.1 Native C++
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'NEO-Media-0.3.1-Native-Cpp.zip'
+      - '.github/workflows/build-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-x64:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract native source package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:GITHUB_WORKSPACE 'NEO-Media-0.3.1-Native-Cpp.zip'
+          if (!(Test-Path $zip)) { throw "Pacote fonte não encontrado: $zip" }
+          $out = Join-Path $env:GITHUB_WORKSPACE 'native-src'
+          if (Test-Path $out) { Remove-Item -Recurse -Force $out }
+          Expand-Archive -LiteralPath $zip -DestinationPath $out -Force
+          $root = Join-Path $out 'NEO-Media-0.3.1-Native-Cpp'
+          if (!(Test-Path (Join-Path $root 'codigo-fonte\CMakeLists.txt'))) {
+            throw 'Estrutura C++ não encontrada dentro do ZIP.'
+          }
+          "NEO_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-ffmpeg
+            mingw-w64-ucrt-x86_64-SDL2
+
+      - name: Configure and compile C++17 Win64
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          ROOT="$(cygpath -u "$NEO_ROOT")"
+          cd "$ROOT"
+          cmake -S codigo-fonte -B build-native -G Ninja             -DCMAKE_BUILD_TYPE=Release             -DNEO_VIDEO_EXPERIMENTAL_HW=OFF             -DNEO_VIDEO_ENABLE_ONNX=OFF
+          cmake --build build-native --parallel 2
+
+      - name: Stage portable Windows x64 package
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          ROOT="$(cygpath -u "$NEO_ROOT")"
+          cd "$ROOT"
+          rm -rf dist-native
+          mkdir -p dist-native/bin dist-native/licencas dist-native/musicas-incluidas
+
+          cp build-native/neo_media/NEO-Media.exe dist-native/
+          cp build-native/neo_media/NEO-Repair.exe dist-native/
+          cp build-native/neo_video/neo_video.exe dist-native/bin/
+          cp build-native/neo_video/neo_audio.exe dist-native/bin/
+
+          cp musicas-incluidas/Ravens-Over-the-Plains.mp3 dist-native/musicas-incluidas/ 2>/dev/null || true
+          cp -r licencas/* dist-native/licencas/ 2>/dev/null || true
+
+          copy_deps () {
+            local exe="$1"
+            local dest="$2"
+            ldd "$exe" | awk '/\/ucrt64\// {print $3}' | while read -r dll; do
+              [ -f "$dll" ] && cp -u "$dll" "$dest/" || true
+            done
+          }
+
+          copy_deps dist-native/NEO-Media.exe dist-native
+          copy_deps dist-native/NEO-Repair.exe dist-native
+          copy_deps dist-native/bin/neo_video.exe dist-native/bin
+          copy_deps dist-native/bin/neo_audio.exe dist-native/bin
+
+          cp /ucrt64/bin/ffmpeg.exe /ucrt64/bin/ffprobe.exe dist-native/bin/
+          copy_deps /ucrt64/bin/ffmpeg.exe dist-native/bin
+          copy_deps /ucrt64/bin/ffprobe.exe dist-native/bin
+
+          test -f dist-native/NEO-Media.exe
+          test -f dist-native/NEO-Repair.exe
+          test -f dist-native/bin/neo_video.exe
+          test -f dist-native/bin/neo_audio.exe
+          test -f dist-native/bin/ffmpeg.exe
+          test -f dist-native/bin/ffprobe.exe
+
+          if find dist-native -type f \( -iname '*.py' -o -iname 'python*.dll' -o -iname 'python*.exe' -o -iname '*.pyd' \) | grep -q .; then
+            echo 'ERRO: Python foi encontrado no pacote nativo.' >&2
+            exit 1
+          fi
+
+      - name: Validate Windows x64 binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = Join-Path $env:NEO_ROOT 'dist-native'
+          $files = @(
+            (Join-Path $dist 'NEO-Media.exe'),
+            (Join-Path $dist 'NEO-Repair.exe'),
+            (Join-Path $dist 'bin\neo_video.exe'),
+            (Join-Path $dist 'bin\neo_audio.exe'),
+            (Join-Path $dist 'bin\ffmpeg.exe'),
+            (Join-Path $dist 'bin\ffprobe.exe')
+          )
+          foreach ($f in $files) {
+            if (!(Test-Path $f)) { throw "Executável ausente: $f" }
+            $b = [IO.File]::ReadAllBytes($f)
+            if ($b.Length -lt 64 -or $b[0] -ne 0x4D -or $b[1] -ne 0x5A) { throw "PE inválido: $f" }
+            $pe = [BitConverter]::ToInt32($b, 0x3C)
+            $machine = [BitConverter]::ToUInt16($b, $pe + 4)
+            if ($machine -ne 0x8664) { throw "Não é x64: $f (machine=0x$('{0:X4}' -f $machine))" }
+            Write-Host "OK x64: $f ($($b.Length) bytes)"
+          }
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Build installer EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Join-Path $env:NEO_ROOT 'codigo-fonte'
+          Push-Location $source
+          $makensis = @(
+            'C:\Program Files (x86)\NSIS\makensis.exe',
+            'C:\Program Files\NSIS\makensis.exe'
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (!$makensis) { throw 'makensis.exe não encontrado.' }
+          & $makensis 'installer.nsi'
+          if ($LASTEXITCODE -ne 0) { throw "NSIS falhou: $LASTEXITCODE" }
+          Pop-Location
+          $installer = Join-Path $source 'NEO-Media-Setup-0.3.1.exe'
+          if (!(Test-Path $installer)) { throw 'Instalador não foi gerado.' }
+          Copy-Item $installer (Join-Path $env:NEO_ROOT 'NEO-Media-Setup-0.3.1.exe') -Force
+
+      - name: Create release ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dist = Join-Path $env:NEO_ROOT 'dist-native'
+          $zip = Join-Path $env:NEO_ROOT 'NEO-Media-0.3.1-Windows-x64-Native-Cpp.zip'
+          if (Test-Path $zip) { Remove-Item -Force $zip }
+          Compress-Archive -Path (Join-Path $dist '*') -DestinationPath $zip -CompressionLevel Optimal
+          Get-Item $zip | Format-List Name,Length,FullName
+
+      - name: Upload compiled portable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEO-Media-0.3.1-Windows-x64-Native-Cpp
+          path: ${{ env.NEO_ROOT }}\NEO-Media-0.3.1-Windows-x64-Native-Cpp.zip
+          if-no-files-found: error
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEO-Media-Setup-0.3.1
+          path: ${{ env.NEO_ROOT }}\NEO-Media-Setup-0.3.1.exe
+          if-no-files-found: error
