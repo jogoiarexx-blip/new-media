@@ -2,13 +2,32 @@
 
 Versão nativa do NEO Media para Windows x64, migrada para **C++17**.
 
-## Download do projeto completo
+## Status da compilação
 
-O pacote completo desta versão está no próprio repositório:
+A versão **0.3.1 foi compilada com sucesso em Windows x64 pelo GitHub Actions**.
+
+O build validou como PE x64:
+
+- `NEO-Media.exe`
+- `NEO-Repair.exe`
+- `bin/neo_video.exe`
+- `bin/neo_audio.exe`
+- `bin/ffmpeg.exe`
+- `bin/ffprobe.exe`
+
+Também foi gerado com sucesso o instalador **NEO-Media-Setup-0.3.1.exe**.
+
+Workflow usado: `.github/workflows/build-native.yml`
+
+Build validado: https://github.com/jogoiarexx-blip/new-media/actions/runs/35646822912
+
+## Download do código-fonte
+
+O pacote fonte está no próprio repositório:
 
 **[NEO-Media-0.3.1-Native-Cpp.zip](./NEO-Media-0.3.1-Native-Cpp.zip)**
 
-O ZIP contém o código-fonte, scripts de build, workflow do GitHub Actions, instalador NSIS, documentação e os arquivos distribuídos com esta versão.
+Os executáveis compilados e o instalador são gerados pelo workflow Windows x64 e publicados como artifacts do GitHub Actions.
 
 ## Arquitetura
 
@@ -18,22 +37,24 @@ O ZIP contém o código-fonte, scripts de build, workflow do GitHub Actions, ins
 - **NEO-Repair.exe** — reparador nativo do FFmpeg.
 - **codigo-fonte/neo_media** — shell desktop C++.
 - **codigo-fonte/neo_video** — motor multimídia C++.
-- **BUILD-WINDOWS-NATIVE.ps1** — build local para Windows.
-- **.github/workflows/build-windows-native.yml** — build Windows x64 automatizado.
+- **BUILD-WINDOWS-NATIVE.ps1** — build local no Windows.
+- **.github/workflows/build-native.yml** — compilação Windows x64 automatizada.
 - **codigo-fonte/installer.nsi** — instalador NSIS.
 
 ## Versão
 
 **0.3.1**
 
-Esta versão remove o runtime Python/Tkinter da nova arquitetura principal. O objetivo do pacote nativo é funcionar em C++/Win64, sem depender de Python instalado no computador.
+A arquitetura principal não utiliza Python, Tkinter, CFFI ou sounddevice no runtime final.
 
-## Compilação
+## Build local
 
-Extraia o ZIP e execute `BUILD-WINDOWS-NATIVE.ps1` no Windows com MSYS2 instalado em `C:\msys64`.
+Quem quiser recompilar localmente pode extrair o pacote e executar `BUILD-WINDOWS-NATIVE.ps1` no Windows com MSYS2 em `C:\msys64`.
 
-O build gera a distribuição em `dist-native`.
+O GitHub Actions já faz essa compilação automaticamente em um runner Windows x64, então não é necessário possuir um compilador instalado apenas para baixar e usar os binários gerados.
 
 ## Correção do erro 0xc000007b
 
-A versão 0.3.1 inclui a nova estrutura de reparo do FFmpeg para evitar o problema de DLL truncada/corrompida que causava o erro **ffprobe.exe - Imagem Incorreta / 0xc000007b**.
+A versão 0.3.1 inclui a nova estrutura de reparo do FFmpeg e o pipeline de build valida os executáveis e DLLs Windows x64 antes da distribuição.
+
+Isso evita publicar novamente componentes PE truncados/corrompidos como o `avcodec-63.dll` que provocava **ffprobe.exe - Imagem Incorreta / 0xc000007b**.
